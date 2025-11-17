@@ -1,98 +1,108 @@
-from typing import Dict, Any, List
+import json
+import os
+import subprocess
+import sys
+from typing import Any, Dict, List
 
 import requests
-from bs4 import BeautifulSoup
 from google.cloud import vision
 
 
-# --- Tool 1: Booking.com Scraper (HTTP + BeautifulSoup) ---
+# --- Tool 1: Booking.com Scraper (Playwright via subprocess) ---
 
-def get_booking_com_data(booking_url: str) -> Dict[str, Any]:
+def get_booking_com_data(booking_url: str, language: str = "en") -> Dict[str, Any]:
     """
-    Scrapes a Booking.com hotel URL for its main description and a set of
-    high-resolution image URLs using plain HTTP + BeautifulSoup.
+    Scrapes a Booking.com hotel URL for its main description and image URLs.
 
-    This version avoids Playwright because the ADK runtime's event loop
-    cannot spawn subprocesses reliably on Windows.
+    This implementation delegates to an external Playwright-based script
+    (`booking_playwright_scraper.py`) run in a separate process so that
+    the ADK event loop does not need to manage browser subprocesses.
 
-    Returns a dictionary like:
+    The script is expected to print a single JSON object to stdout:
         {
             "status": "success" | "error",
+            "hotel_name": "...",
             "description": "...",
-            "image_urls": [...],
-            "hotel_name": "...",        # when detected
-            "booking_url": "original url",
+            "image_urls": ["url1", "url2", ...],
+            "booking_url": "...",
+            "booking_url_canon": "...",
             "message": "optional error/info message"
         }
     """
     print(f"--- Calling Tool: get_booking_com_data for {booking_url} ---")
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/91.0.4472.124 Safari/537.36"
-        )
-    }
+    # Resolve the scraper script path relative to this file.
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    script_path = os.path.join(project_root, "booking_playwright_scraper.py")
 
-    try:
-        resp = requests.get(booking_url, headers=headers, timeout=30)
-        resp.raise_for_status()
-    except requests.RequestException as e:
-        print(f"[Booking Scraper] HTTP error: {e}")
+    if not os.path.isfile(script_path):
+        msg = f"Playwright scraper script not found at {script_path}"
+        print(f"[Booking Scraper] {msg}")
         return {
             "status": "error",
-            "message": f"HTTP error fetching Booking.com page: {e}",
+            "message": msg,
             "description": "No description found.",
             "image_urls": [],
             "booking_url": booking_url,
         }
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-
-    # Hotel name (header on the page)
-    hotel_name = None
+    cmd = [sys.executable, script_path, booking_url, language]
     try:
-        name_el = soup.select_one("h2.pp-header__title")
-        if name_el:
-            hotel_name = name_el.get_text(strip=True)
-    except Exception:
-        hotel_name = None
+        completed = subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.CalledProcessError as e:
+        msg = f"Playwright scraper failed: {e.stderr or e.stdout}"
+        print(f"[Booking Scraper] {msg}")
+        return {
+            "status": "error",
+            "message": msg,
+            "description": "No description found.",
+            "image_urls": [],
+            "booking_url": booking_url,
+        }
+    except subprocess.TimeoutExpired:
+        msg = "Playwright scraper timed out."
+        print(f"[Booking Scraper] {msg}")
+        return {
+            "status": "error",
+            "message": msg,
+            "description": "No description found.",
+            "image_urls": [],
+            "booking_url": booking_url,
+        }
 
-    # Description: prefer modern data-testid, fall back to older id
-    description = "No description found."
-    desc_el = soup.select_one('[data-testid="property-description"]')
-    if desc_el:
-        description = desc_el.get_text(" ", strip=True)
-    else:
-        desc_div = soup.find(id="property_description_content")
-        if desc_div:
-            description = desc_div.get_text(" ", strip=True)
+    stdout = (completed.stdout or "").strip()
+    try:
+        result = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        msg = f"Could not parse scraper JSON output: {e}"
+        print(f"[Booking Scraper] {msg}")
+        print(f"[Booking Scraper] Raw output: {stdout[:200]}", file=sys.stderr)
+        return {
+            "status": "error",
+            "message": msg,
+            "description": "No description found.",
+            "image_urls": [],
+            "booking_url": booking_url,
+        }
 
-    # Image URLs: Booking hotel photos are usually served from cf.bstatic.com/xdata/images/hotel
-    image_urls: List[str] = []
-    seen = set()
-    for img in soup.find_all("img"):
-        src = img.get("src") or ""
-        if "cf.bstatic.com/xdata/images/hotel" in src:
-            if src not in seen:
-                seen.add(src)
-                image_urls.append(src)
-
-    result: Dict[str, Any] = {
-        "status": "success" if image_urls else "error",
-        "description": description,
-        "image_urls": image_urls,
-        "booking_url": booking_url,
-    }
-    if hotel_name:
-        result["hotel_name"] = hotel_name
-    if not image_urls:
-        result["message"] = "No hotel images found on the page."
+    # Ensure required keys exist.
+    if "description" not in result:
+        result["description"] = "No description found."
+    if "image_urls" not in result:
+        result["image_urls"] = []
+    if "booking_url" not in result:
+        result["booking_url"] = booking_url
 
     print(
-        f"--- [Booking Scraper] Result summary: status={result['status']}, "
-        f"desc_len={len(description)}, images={len(image_urls)} ---"
+        f"--- [Booking Scraper] Result summary: status={result.get('status')}, "
+        f"desc_len={len(result.get('description', ''))}, "
+        f"images={len(result.get('image_urls', []))} ---"
     )
 
     return result
