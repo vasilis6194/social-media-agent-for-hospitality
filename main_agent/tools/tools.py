@@ -8,7 +8,7 @@ import requests
 from google.cloud import vision
 
 
-# --- Tool 1: Booking.com Scraper (Playwright via subprocess) ---
+# --- Booking.com Scraper (Playwright via subprocess) ---
 
 def get_booking_com_data(booking_url: str, language: str = "en") -> Dict[str, Any]:
     """
@@ -108,7 +108,7 @@ def get_booking_com_data(booking_url: str, language: str = "en") -> Dict[str, An
     return result
 
 
-# --- Tool 2: Google Cloud Vision Analyzer ---
+# --- Google Cloud Vision Analyzer ---
 
 def analyze_image_with_vision(image_url: str) -> Dict[str, Any]:
     """

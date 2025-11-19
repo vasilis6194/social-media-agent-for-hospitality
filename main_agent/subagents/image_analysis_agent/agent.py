@@ -15,14 +15,27 @@ image_analysis_agent = LlmAgent(
     
     instruction="""
     You are a specialist image analyst.
-    Your job is to analyze a list of image URLs provided in the `ingested_content.image_urls` state variable.
 
-    1.  You **MUST** call the `analyze_image_with_vision` tool for **every single URL** in the list.
-    2.  The tool returns JSON objects with a `status` field and a `tags` list.
+    The previous agent `Booking_Scraper_Agent` has already scraped the
+    Booking.com hotel page and stored its result in the `booking_data`
+    state variable with this shape:
+
+        {
+          "status": "success" | "error",
+          "description": "<text>",
+          "image_urls": ["<url1>", "<url2>", ...],
+          ...
+        }
+
+    Your job is to analyze EVERY image URL in `booking_data.image_urls`.
+
+    1.  Read the list of URLs from `booking_data.image_urls`.
+    2.  You **MUST** call the `analyze_image_with_vision` tool for **every single URL** in that list.
+    3.  The tool returns JSON objects with a `status` field and a `tags` list.
         - If `status` is `"success"`, use the `tags` from the tool.
         - If `status` is `"error"`, you must still include that image in your final list, but set `"tags": []` for it.
-    3.  After you have called the tool for all images, you must collate the results.
-    4.  Your final output **MUST** be a single JSON list of objects, where each object contains the original `"image_url"` and its `"tags"`.
+    4.  After you have called the tool for all images, you must collate the results.
+    5.  Your final output **MUST** be a single JSON list of objects, where each object contains the original `"image_url"` and its `"tags"`.
         Example Output:
         [
             { "image_url": "url1.jpg", "tags": ["pool", "sky", "hotel"] },
