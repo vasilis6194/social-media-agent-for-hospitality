@@ -1,17 +1,24 @@
 import os
 import sys
 import asyncio
-import json
-from dotenv import load_dotenv  # <-- 1. IMPORT
-load_dotenv()                   # <-- 2. LOAD KEYS
+import logging
+from dotenv import load_dotenv
 
-# --- Check that keys are loaded ---
-if not os.environ.get("GOOGLE_API_KEY"):
-    print("❌ Error: GOOGLE_API_KEY not found in .env file.")
-    sys.exit(1)
-if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
-    print("❌ Error: GOOGLE_APPLICATION_CREDENTIALS not found in .env file.")
-    sys.exit(1)
+# --- Observability Imports ---
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+# Try importing Google Cloud libraries (fails gracefully if not installed locally)
+try:
+    import google.cloud.logging
+    from google.cloud.logging.handlers import CloudLoggingHandler
+    from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+    HAS_GOOGLE_CLOUD = True
+except ImportError:
+    HAS_GOOGLE_CLOUD = False
+
+load_dotenv()
 
 from google.adk.apps.app import App, EventsCompactionConfig
 from google.adk.runners import Runner
@@ -19,121 +26,130 @@ from google.adk.sessions import DatabaseSessionService
 from google.genai import types
 
 # --- 1. Import the Root Agent ---
-# This imports the 'root_agent' variable from your main_agent/agent.py file
 try:
     from main_agent.agent import root_agent
     print("✅ Successfully imported root_agent from main_agent/agent.py")
 except ImportError as e:
     print(f"❌ Error: Could not import root_agent: {e}")
-    print("Please make sure 'main_agent/agent.py' and 'subagents/__init__.py' exist.")
     sys.exit(1)
 
+# --- 2. Configure Observability ---
+def setup_observability():
+    """Configures Logging and Tracing based on environment."""
+    # Set up the root logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
 
-# --- 2. Configure the ADK Application ---
-# We wrap the root_agent in an App to add critical features like
-# context compaction, which is essential for this large pipeline.
+    # A. Configure OpenTelemetry Tracing Provider
+    trace.set_tracer_provider(TracerProvider())
+    
+    # B. Check if we are in Google Cloud (Production)
+    # Cloud Run always sets 'GOOGLE_CLOUD_PROJECT' env var
+    if HAS_GOOGLE_CLOUD and os.environ.get("GOOGLE_CLOUD_PROJECT"):
+        # 1. Setup Cloud Logging
+        client = google.cloud.logging.Client()
+        handler = CloudLoggingHandler(client)
+        logger.addHandler(handler)
+        logging.info("🔭 Google Cloud Logging: ENABLED")
+
+        # 2. Setup Cloud Trace
+        exporter = CloudTraceSpanExporter()
+        trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(exporter))
+        logging.info("🔭 Google Cloud Trace: ENABLED")
+    else:
+        # Local Development Fallback
+        # If no handlers exist, add a standard stream handler
+        if not logger.handlers:
+            handler = logging.StreamHandler(sys.stdout)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        logging.info("💻 Local Logging: ENABLED (Trace export skipped)")
+
+# Initialize Observability immediately on import
+setup_observability()
+
+# --- 3. Configure the ADK Application ---
 compaction_config = EventsCompactionConfig(
-    compaction_interval=2,  # Compact context after 2 steps
+    compaction_interval=2,
     overlap_size=1
 )
 
 social_media_app = App(
     name="social_media_factory",
-    root_agent=root_agent,  # <-- Use the imported root_agent
+    root_agent=root_agent,
     events_compaction_config=compaction_config
 )
 
-# --- 3. Configure the Runner and Session ---
-# We use DatabaseSessionService for persistence, which is ideal
-# for a Streamlit app to retrieve results from.
-db_url = "sqlite:///sessions.db"
+# --- 4. Configure the Runner and Session ---
+# Use /tmp/sessions.db in Cloud Run (because only /tmp is writable)
+# locally, use sessions.db
+db_path = "/tmp/sessions.db" if os.environ.get("GOOGLE_CLOUD_PROJECT") else "sessions.db"
+db_url = f"sqlite:///{db_path}"
+
 session_service = DatabaseSessionService(db_url=db_url)
 
-# The Runner is what executes the App
 runner = Runner(
     app=social_media_app,
     session_service=session_service
 )
 
-# --- 4. Main Function to Run the Pipeline ---
-# This is how you will execute the agent (e.g., from your Streamlit app)
+# --- 5. Main Pipeline Execution ---
 async def run_pipeline(booking_url: str, website_url: str = None) -> dict:
     """
     Runs the full social media content generation pipeline.
-    
-    Args:
-        booking_url: The Booking.com URL.
-        website_url: (Optional) The hotel's main website URL.
-        
-    Returns:
-        A dictionary containing the final generated posts or an error.
     """
-    # Use os.urandom for a simple, unique session ID
+    # Generate a unique session ID
     session_id = f"session_{os.urandom(8).hex()}"
     user_id = "rapidbounce_user"
     
-    # Format the initial user message for the first agent
+    # Format the user prompt
     user_input = f"Generate content for Booking URL: {booking_url}"
     if website_url:
         user_input += f" and Website URL: {website_url}"
         
     message = types.Content(role="user", parts=[types.Part(text=user_input)])
     
-    print(f"--- 🚀 Starting Pipeline (Session: {session_id}) ---")
+    logging.info(f"🚀 Starting Pipeline (Session: {session_id}) for {booking_url}")
     
     try:
-        # Run the agent and wait for it to complete
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session_id,
-            new_message=message
-        ):
-            # We can log steps here if needed, but we'll wait for the end.
-            if event.is_final_response():
-                print("--- ✅ Pipeline Complete ---")
+        # Create a trace span for the pipeline execution
+        tracer = trace.get_tracer(__name__)
+        with tracer.start_as_current_span("run_pipeline"):
+            
+            # Execute the agent runner
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=session_id,
+                new_message=message
+            ):
+                # We iterate to let the generator finish, but we don't print every step
+                pass 
 
-        # After the run, get the session to retrieve the final state
-        session = await session_service.get_session(
-            app_name=social_media_app.name,
-            user_id=user_id,
-            session_id=session_id
-        )
-        
-        # Get the final output from the 'social_media_agent'
-        final_posts = session.state.get("final_posts")
-        
-        if final_posts:
-            return {"status": "success", "data": final_posts}
-        else:
-            return {"status": "error", "message": "Pipeline ran but 'final_posts' was not found in state."}
+            # Retrieve the final state from the session
+            session = await session_service.get_session(
+                app_name=social_media_app.name,
+                user_id=user_id,
+                session_id=session_id
+            )
+            
+            final_posts = session.state.get("final_posts")
+            
+            if final_posts:
+                logging.info("✅ Pipeline Success: Posts generated")
+                return {"status": "success", "data": final_posts}
+            else:
+                logging.error("❌ Pipeline finished but 'final_posts' not found in state")
+                return {"status": "error", "message": "Pipeline ran but no posts were generated."}
             
     except Exception as e:
-        print(f"--- ❌ Pipeline Error ---")
-        print(f"An error occurred: {e}")
+        logging.error(f"❌ Pipeline Error: {e}", exc_info=True)
         return {"status": "error", "message": str(e)}
 
-# --- 5. Test Run Entry Point ---
-# This block lets you run 'python main.py' to test the whole system.
 if __name__ == "__main__":
-    # !!! IMPORTANT: REPLACE WITH YOUR TEST URLS !!!
-    TEST_BOOKING_URL = "https://www.booking.com/hotel/gr/your-test-hotel.html"
-    TEST_WEBSITE_URL = "https://www.your-test-hotel-website.com"
-    
-    if "your-test-hotel" in TEST_BOOKING_URL:
-        print("⚠️ Please update the TEST_BOOKING_URL in main.py before running.")
+    # Simple test for running main.py directly
+    TEST_URL = "https://www.booking.com/hotel/gr/test-hotel.html"
+    if "test-hotel" in TEST_URL:
+         print("⚠️ Update the TEST_URL in main.py to test directly.")
     else:
-        # Check for Google API Key
-        if not os.environ.get("GOOGLE_API_KEY"):
-            print("❌ Error: GOOGLE_API_KEY environment variable not set.")
-            print("Please set it in your terminal: $env:GOOGLE_API_KEY='your_key_here'")
-        else:
-            print("Starting test run...")
-            # Run the async main function
-            result = asyncio.run(run_pipeline(TEST_BOOKING_URL, TEST_WEBSITE_URL))
-            
-            if result["status"] == "success":
-                print("\n--- 🏁 FINAL RESULT ---")
-                print(json.dumps(result["data"], indent=2))
-            else:
-                print(f"\n--- 🏁 TEST FAILED ---")
-                print(result["message"])
+        asyncio.run(run_pipeline(TEST_URL))

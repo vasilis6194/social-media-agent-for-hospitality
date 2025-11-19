@@ -1,0 +1,14 @@
+google-adk
+google-genai
+python-dotenv
+fastapi
+uvicorn
+playwright
+beautifulsoup4
+requests
+google-cloud-vision
+# Observability Libraries
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-gcp-trace
+google-cloud-logging
