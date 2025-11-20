@@ -2,6 +2,7 @@ import os
 import sys
 import asyncio
 import logging
+import json
 from dotenv import load_dotenv
 
 # --- Observability Imports ---
@@ -94,6 +95,52 @@ runner = Runner(
     session_service=session_service
 )
 
+# --- Helpers ---
+def _normalize_final_posts(final_posts):
+    """Convert model output into a Python list for API consumption."""
+    if final_posts is None:
+        return None
+    if isinstance(final_posts, list):
+        return final_posts
+
+    if isinstance(final_posts, str):
+        content = final_posts.strip()
+
+        # Strip common ```json fences if present
+        if content.startswith("```"):
+            lines = content.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].startswith("```"):
+                lines = lines[:-1]
+            content = "\n".join(lines).strip()
+
+        # Fallback: if we still have junk around, grab the first JSON-like chunk
+        if "[" in content and "]" in content:
+            content = content[content.find("[") : content.rfind("]") + 1]
+
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as e:
+            logging.error(f"Failed to parse final_posts JSON: {e}")
+            return None
+
+        if isinstance(parsed, list):
+            normalized = []
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                hashtags = item.get("hashtags")
+                if isinstance(hashtags, str):
+                    # Split on whitespace, keep hashes if present
+                    hashtags = [tag for tag in hashtags.split() if tag]
+                item["hashtags"] = hashtags if isinstance(hashtags, list) else []
+                normalized.append(item)
+            return normalized or None
+
+    logging.error("final_posts is not a list or parseable JSON string")
+    return None
+
 # --- 5. Main Pipeline Execution ---
 async def run_pipeline(booking_url: str, website_url: str = None) -> dict:
     """
@@ -116,7 +163,13 @@ async def run_pipeline(booking_url: str, website_url: str = None) -> dict:
         # Create a trace span for the pipeline execution
         tracer = trace.get_tracer(__name__)
         with tracer.start_as_current_span("run_pipeline"):
-            
+            # Create the session upfront so runner.run_async can load it from storage
+            await session_service.create_session(
+                app_name=social_media_app.name,
+                user_id=user_id,
+                session_id=session_id,
+            )
+
             # Execute the agent runner
             async for event in runner.run_async(
                 user_id=user_id,
@@ -133,7 +186,8 @@ async def run_pipeline(booking_url: str, website_url: str = None) -> dict:
                 session_id=session_id
             )
             
-            final_posts = session.state.get("final_posts")
+            final_posts_raw = session.state.get("final_posts")
+            final_posts = _normalize_final_posts(final_posts_raw)
             
             if final_posts:
                 logging.info("✅ Pipeline Success: Posts generated")
