@@ -1,5 +1,18 @@
 # Hospitality Social Media Agent (Capstone Project)
 
+
+<p align="center">
+  <a href="https://www.youtube.com/watch?v=sSgoRS7HOwE">
+    <img src="./thumbnail.png" alt="Project Demo Video" width="900"/>
+  </a>
+</p>
+
+
+<p align="center">
+  <img src="./ui_image.png" alt="UI Preview" width="900"/>
+</p>
+
+
 Track: **Concierge Agents** – AI agents for hospitality and customer experience.  
 Course: **5‑Day AI Agents Intensive with Google (Nov 10–14, 2025)** – Capstone project.
 
