@@ -1,7 +1,7 @@
 # Hospitality Social Media Agent (Capstone Project)
 
 <p align="center">
-  <img src="ui_image" alt="UI Preview" width="900"/>
+  <img src="./ui_image.png" alt="UI Preview" width="900"/>
 </p>
 
 Track: **Concierge Agents** – AI agents for hospitality and customer experience.  
