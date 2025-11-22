@@ -78,3 +78,5 @@ __cache__/
 
 # Ignore the service account key
 *.json
+
+*.mp4
