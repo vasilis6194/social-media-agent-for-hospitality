@@ -23,11 +23,17 @@ logger = logging.getLogger("api_server")
 # --- FastAPI App Setup ---
 app = FastAPI(title="Hospitality Agent API")
 
-# Configure CORS to allow requests from your frontend
+# Configure CORS to allow requests from the local Vite dev server
+# and from any future hosted frontend if needed.
+allowed_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific frontend URL
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_credentials=False,  # No cookies/credentials needed for this API
     allow_methods=["*"],
     allow_headers=["*"],
 )

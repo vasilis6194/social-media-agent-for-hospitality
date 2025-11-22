@@ -150,7 +150,7 @@ pip install -r requirements.txt
 Create a `.env` file at the project root (do **not** commit real values):
 
 ```bash
-GEMINI_API_KEY=your-gemini-api-key-here
+GOOGLE_API_KEY=your-gemini-api-key-here           # Gemini / Generative Language API key
 GOOGLE_APPLICATION_CREDENTIALS=service-account-key.json  # Vision credentials
 GOOGLE_CLOUD_PROJECT=your-gcp-project-id                 # Optional, enables Cloud Logging/Trace
 ```
@@ -219,6 +219,16 @@ To deploy, you can:
 
 Documenting the exact deploy command for your environment (e.g., `gcloud run deploy ...`) can be added in your final submission notes.
 
+### 7.1 Current Deployment Used in This Project
+
+- Backend is deployed to Cloud Run as service `hospitality-social-agent` in project `first-agent-472509` (region `europe-west1`).
+- The container is built from this repository’s `Dockerfile` and runs with increased resources (e.g. `--memory=2Gi --cpu=2 --concurrency=1`) to support Playwright/Chromium and the multi‑agent pipeline without hitting the default 512 MiB limit.
+- The public base URL used by the frontend is:
+
+  `https://hospitality-social-agent-818843143471.europe-west1.run.app`
+
+- The React/Vite frontend under `frontend/` is run locally during development (`npm run dev`) and calls the backend’s `/generate` endpoint as described in section 6.
+
 ---
 
 ## 8. Effective Use of Gemini (Bonus)
@@ -262,4 +272,3 @@ This satisfies the “Effective Use of Gemini” bonus by making Gemini central 
 - `sessions.db` – Local SQLite database used by `DatabaseSessionService` for session storage.
 
 This README is intended to serve as the primary documentation for the capstone submission, covering the **problem, solution, value, architecture, technical implementation, setup instructions, and Gemini usage**, in line with the provided rubric.
-

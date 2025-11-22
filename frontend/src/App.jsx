@@ -127,6 +127,9 @@ export default function App() {
         throw new Error(data.message || 'Failed to generate content');
       }
     } catch (err) {
+      // Log full error to help debug network / CORS issues
+      // eslint-disable-next-line no-console
+      console.error("Error calling backend /generate:", err);
       setError(err.message || "Could not connect to the agent. Ensure backend is running.");
     } finally {
       setLoading(false);
