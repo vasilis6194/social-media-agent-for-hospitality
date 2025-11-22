@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
 import { Camera, Globe, Sparkles, Copy, ExternalLink, Image as ImageIcon, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 
+// --- Backend configuration ---
+// Prefer Vite env var if set, otherwise fall back to local dev API.
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 // --- Components ---
 
 const Card = ({ children, className = "" }) => (
@@ -98,7 +103,7 @@ export default function App() {
     }
 
     try {
-      const response = await fetch('http://localhost:8000/generate', {
+      const response = await fetch(`${API_BASE_URL}/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -106,6 +111,13 @@ export default function App() {
           website_url: websiteUrl || null 
         }),
       });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => '');
+        throw new Error(
+          errorText || `Backend returned HTTP ${response.status}`
+        );
+      }
 
       const data = await response.json();
 
